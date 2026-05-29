@@ -1,0 +1,18 @@
+{
+  "name": "anikage-scraper-worker",
+  "version": "1.0.0",
+  "description": "Anikage Anime Scraper API ready for Cloudflare Workers",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "hono": "^4.2.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240405.0",
+    "typescript": "^5.4.5",
+    "wrangler": "^3.48.0"
+  }
+}
