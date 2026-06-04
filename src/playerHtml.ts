@@ -498,8 +498,8 @@ export const playerHtml = `<!doctype html>
           <div class="selector-group">
             <span class="selector-label">Server / Player</span>
             <select id="serverSelect" class="custom-select">
-              <option value="pahe">Anikage Server (Proxied M3U8)</option>
-              <option value="megaplay">Megaplay Server (CDN M3U8)</option>
+              <option value="auto">Auto Selection (Best Stream)</option>
+              <option value="megaplay">Megaplay (CDN M3U8)</option>
             </select>
           </div>
           
@@ -582,9 +582,46 @@ export const playerHtml = `<!doctype html>
       const timeStr = now.toTimeString().split(' ')[0];
       const line = document.createElement('div');
       line.className = 'debug-line';
-      line.innerHTML = \`<span class="debug-time">[\${timeStr}]</span> <span class="debug-msg \${type}">\${message}</span>\`;
+      line.innerHTML = \`<span class="debug-line">[\${timeStr}]</span> <span class="debug-msg \${type}">\${message}</span>\`;
       debugConsole.appendChild(line);
       debugConsole.scrollTop = debugConsole.scrollHeight;
+    }
+
+    function updateServerSelect(serversList, currentSelected) {
+      const previousValue = currentSelected || serverSelect.value || 'auto';
+      
+      // Clear options
+      serverSelect.innerHTML = '';
+      
+      // Add Auto option
+      const autoOpt = document.createElement('option');
+      autoOpt.value = 'auto';
+      autoOpt.textContent = 'Auto Selection (Best Stream)';
+      serverSelect.appendChild(autoOpt);
+      
+      // Add each dynamic server
+      serversList.forEach(s => {
+        if (s.id !== 'pahe') {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = \`\${s.id.toUpperCase()} Server\${s.default ? ' (Default)' : ''}\`;
+          serverSelect.appendChild(opt);
+        }
+      });
+      
+      // Add Megaplay option
+      const mpOpt = document.createElement('option');
+      mpOpt.value = 'megaplay';
+      mpOpt.textContent = 'Megaplay (CDN M3U8)';
+      serverSelect.appendChild(mpOpt);
+      
+      // Restore selection if it exists in the new options list
+      let hasPrevious = Array.from(serverSelect.options).some(o => o.value === previousValue);
+      if (hasPrevious) {
+        serverSelect.value = previousValue;
+      } else {
+        serverSelect.value = 'auto';
+      }
     }
 
     // Load initial search on page mount
@@ -731,7 +768,7 @@ export const playerHtml = `<!doctype html>
 
     async function playEpisode(episodeNum) {
       activeEpisodeNum = episodeNum;
-      const provider = serverSelect.value;
+      let provider = serverSelect.value;
       const lang = langSelect.value;
       let mediaRecoveryAttempts = 0;
       
@@ -752,46 +789,20 @@ export const playerHtml = `<!doctype html>
         let streamUrl = '';
         let subtitles = [];
 
-        if (provider === 'pahe') {
-          // 1. Fetch available servers dynamically for this episode
+        // 1. Fetch available servers list to populate dropdown dynamically
+        try {
           const serversRes = await fetch(\`/api/servers?slug=\${activeAnime.slug}&episode=\${episodeNum}\`);
           const serversJson = await serversRes.json();
-          let serversToTry = ['pahe']; // fallback default
-          
-          if (serversJson.success && Array.isArray(serversJson.data) && serversJson.data.length > 0) {
-            // Get all server IDs returned by the backend (e.g. ['pahe', 'miko'])
-            serversToTry = serversJson.data.map(s => s.id);
+          if (serversJson.success && Array.isArray(serversJson.data)) {
+            updateServerSelect(serversJson.data, provider);
+            // Re-read provider since updateServerSelect might have reset it to auto
+            provider = serverSelect.value;
           }
-          
-          let resolvedJson = null;
-          let activeServerId = '';
-          
-          // Try each server in the list until one returns valid sources
-          for (const serverId of serversToTry) {
-            log(\`Querying stream links for server "\${serverId}"...\`, 'info');
-            try {
-              const res = await fetch(\`/api/streams?slug=\${activeAnime.slug}&episode=\${episodeNum}&provider=\${serverId}&lang=\${lang}\`);
-              const json = await res.json();
-              if (json.success && json.data && json.data.sources && json.data.sources.length > 0) {
-                resolvedJson = json;
-                activeServerId = serverId;
-                log(\`Successfully fetched stream links from server "\${serverId}"!\`, 'success');
-                break;
-              } else {
-                log(\`Server "\${serverId}" returned no stream links.\`, 'info');
-              }
-            } catch (err) {
-              log(\`Failed to query server "\${serverId}": \${err.message}\`, 'info');
-            }
-          }
-          
-          if (!resolvedJson) {
-            throw new Error(\`All available servers (\${serversToTry.join(', ')}) returned no stream links.\`);
-          }
-          
-          // Use the proxy stream URL
-          streamUrl = resolvedJson.data.sources[0].streamUrl;
-        } else if (provider === 'megaplay') {
+        } catch (err) {
+          log(\`Failed to fetch servers list: \${err.message}\`, 'info');
+        }
+
+        if (provider === 'megaplay') {
           // Fetch from Megaplay player direct scraper
           if (!activeAnime.anilistId) {
             throw new Error("This anime has no AniList ID mapping, required for Megaplay.");
@@ -807,6 +818,25 @@ export const playerHtml = `<!doctype html>
           streamUrl = json.data.sources.file;
           if (json.data.tracks) {
             subtitles = json.data.tracks.filter(t => t.kind === 'captions' || t.kind === 'subtitles');
+          }
+        } else {
+          // 2. Fetch standard streams (Auto or specific provider like miko, anya, etc.)
+          let resUrl = \`/api/streams?slug=\${activeAnime.slug}&episode=\${episodeNum}&lang=\${lang}\`;
+          if (provider && provider !== 'auto') {
+            resUrl += \`&provider=\${provider}\`;
+          }
+          
+          log(\`Querying stream links for provider "\${provider}"...\`, 'info');
+          const res = await fetch(resUrl);
+          const json = await res.json();
+          if (json.success && json.data && json.data.sources && json.data.sources.length > 0) {
+            streamUrl = json.data.sources[0].streamUrl;
+            if (json.data.subtitles) {
+              subtitles = json.data.subtitles.filter(t => t.kind === 'captions' || t.kind === 'subtitles');
+            }
+            log(\`Successfully loaded stream from provider "\${provider}"!\`, 'success');
+          } else {
+            throw new Error(json.error || \`Provider "\${provider}" returned no stream links.\`);
           }
         }
 

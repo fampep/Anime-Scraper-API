@@ -124,7 +124,7 @@ app.get('/api/servers', async (c) => {
 app.get('/api/streams', async (c) => {
   const slug = c.req.query('slug');
   const episodeStr = c.req.query('episode');
-  const provider = c.req.query('provider') || 'pahe';
+  const requestedProvider = c.req.query('provider');
   const lang = c.req.query('lang') || 'sub';
   
   if (!slug || !episodeStr) {
@@ -136,29 +136,67 @@ app.get('/api/streams', async (c) => {
     return c.json({ success: false, error: 'Parameter "episode" must be a valid integer.' }, 400);
   }
   
-  let streams = await scraper.getStreams(slug, episode, provider, lang);
+  // 1. Resolve which servers to try
+  let serversToTry: string[] = [];
+  if (requestedProvider && requestedProvider !== 'pahe' && requestedProvider !== 'auto') {
+    serversToTry.push(requestedProvider);
+  }
   
-  // Dynamic server fallback at API layer: if requested provider returns no streams, try alternative servers
-  if ((!streams || !streams.sources || streams.sources.length === 0) && provider === 'pahe') {
-    try {
-      const servers = await scraper.getServers(slug, episode);
-      if (Array.isArray(servers)) {
-        for (const s of servers) {
-          if (s.id !== 'pahe') {
-            const fallbackStreams = await scraper.getStreams(slug, episode, s.id, lang);
-            if (fallbackStreams && fallbackStreams.sources && fallbackStreams.sources.length > 0) {
-              streams = fallbackStreams;
-              break;
-            }
-          }
+  // Retrieve available servers for fallback or auto selection
+  let allServers: any[] = [];
+  try {
+    allServers = await scraper.getServers(slug, episode);
+  } catch (err: any) {
+    console.error("API failed to get servers list:", err.message);
+  }
+  
+  if (allServers && allServers.length > 0) {
+    if (!requestedProvider || requestedProvider === 'pahe' || requestedProvider === 'auto') {
+      // Put the default marked server first
+      const defaultServer = allServers.find((s: any) => s.default);
+      if (defaultServer) {
+        serversToTry.push(defaultServer.id);
+      }
+      for (const s of allServers) {
+        if (!serversToTry.includes(s.id) && s.id !== 'pahe') {
+          serversToTry.push(s.id);
         }
       }
-    } catch (err) {
-      console.error("API stream fallback failed:", err);
+    } else {
+      // Append others as fallback
+      for (const s of allServers) {
+        if (!serversToTry.includes(s.id) && s.id !== 'pahe') {
+          serversToTry.push(s.id);
+        }
+      }
+    }
+  } else {
+    // If servers list couldn't be loaded, try static popular choices
+    if (serversToTry.length === 0) {
+      serversToTry = ['miko', 'anya', 'verse', 'neko', 'megg', 'kiss'];
     }
   }
   
-
+  // 2. Query servers in sequence
+  let streams: any = null;
+  let errorMsg = 'No streams found';
+  
+  for (const prov of serversToTry) {
+    try {
+      const result = await scraper.getStreams(slug, episode, prov, lang);
+      if (result && Array.isArray(result.sources) && result.sources.length > 0) {
+        streams = result;
+        break;
+      }
+    } catch (err: any) {
+      console.warn(`Fallback route: failed to fetch streams for provider ${prov}:`, err.message);
+      errorMsg = err.message;
+    }
+  }
+  
+  if (!streams) {
+    throw new Error(errorMsg);
+  }
 
   return c.json({
     success: true,

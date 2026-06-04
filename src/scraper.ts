@@ -171,6 +171,25 @@ export async function getServers(slug: string, episode: number): Promise<any[]> 
 }
 
 /**
+ * Helper to build the correct proxied streaming or subtitle URL
+ */
+function buildProxyUrl(url: string, isM3U8: boolean): string {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  
+  const proxyBase = 'https://prox.anikage.cc';
+  if (url.startsWith('/stream/') || url.startsWith('/m3u8/') || url.startsWith('/hls/')) {
+    return `${proxyBase}${url}`;
+  }
+  if (url.startsWith('stream/') || url.startsWith('m3u8/') || url.startsWith('hls/')) {
+    return `${proxyBase}/${url}`;
+  }
+  
+  const prefix = isM3U8 ? 'm3u8' : 'stream';
+  return `${proxyBase}/${prefix}/${url}`;
+}
+
+/**
  * 5. Fetch Stream sources (decodes to prox.anikage.cc M3U8 links)
  */
 export async function getStreams(slug: string, episode: number, provider: string = 'pahe', lang: string = 'sub'): Promise<any> {
@@ -187,16 +206,34 @@ export async function getStreams(slug: string, episode: number, provider: string
   }
   
   const data: any = await res.json();
+  
   if (data && Array.isArray(data.sources)) {
     data.sources = data.sources.map((src: any) => {
-      // If the url is encrypted (does not start with http/https), build the proxied m3u8 url
       let playUrl = src.url;
       if (playUrl && !playUrl.startsWith('http://') && !playUrl.startsWith('https://')) {
-        playUrl = `https://prox.anikage.cc/stream/${src.url}/index.txt`;
+        playUrl = buildProxyUrl(src.url, !!src.isM3U8);
       }
       return {
         ...src,
         streamUrl: playUrl
+      };
+    });
+  }
+
+  if (data && Array.isArray(data.subtitles)) {
+    data.subtitles = data.subtitles.map((sub: any) => {
+      let playFile = sub.file;
+      if (playFile && !playFile.startsWith('http://') && !playFile.startsWith('https://')) {
+        playFile = buildProxyUrl(playFile, false);
+      }
+      let playUrl = sub.url;
+      if (playUrl && !playUrl.startsWith('http://') && !playUrl.startsWith('https://')) {
+        playUrl = buildProxyUrl(playUrl, false);
+      }
+      return {
+        ...sub,
+        file: playFile,
+        url: playUrl
       };
     });
   }
