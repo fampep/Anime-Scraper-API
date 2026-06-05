@@ -182,8 +182,8 @@ Extracts raw HLS master playlists and subtitle files from Megaplay (`megaplay.bu
 
 1.  **Clone the Repository**:
     ```bash
-    git clone https://github.com/<your-username>/anikage-scraper-api.git
-    cd anikage-scraper-api
+    git clone https://github.com/Varomine/Anime-Scraper-API
+    cd Anime-Scraper-API
     ```
 2.  **Install Dependencies**:
     ```bash
